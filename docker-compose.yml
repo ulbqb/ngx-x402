@@ -1,0 +1,26 @@
+version: "3.8"
+
+services:
+  x402-proxy:
+    build: .
+    ports:
+      - "8080:80"
+    depends_on:
+      - redis
+    environment:
+      - X402_REDIS_URL=redis://redis:6379
+      - RUST_LOG=info
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  # Example backend for testing
+  backend:
+    image: hashicorp/http-echo
+    command: ["-text", '{"weather":"sunny","temperature":70}']
+    ports:
+      - "3000:5678"

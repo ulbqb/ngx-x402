@@ -1,0 +1,49 @@
+[package]
+name = "ngx-x402"
+version = "0.1.0"
+edition = "2021"
+description = "Nginx module for x402 HTTP micropayment protocol - reverse proxy for existing APIs"
+license = "Apache-2.0"
+repository = "https://github.com/example/ngx-x402"
+keywords = ["nginx", "x402", "payment", "reverse-proxy", "micropayment"]
+
+[lib]
+name = "ngx_x402"
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# x402 protocol types (x402-rs/x402-rs)
+x402-types = "1.0"
+
+# nginx bindings
+ngx = { version = "0.5", features = ["vendored"] }
+
+# async / HTTP
+tokio = { version = "1.35", features = ["rt", "rt-multi-thread", "sync"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+rust_decimal = "1.36"
+base64 = "0.22"
+
+# observability
+prometheus = "0.14"
+log = "0.4"
+
+# Redis (dynamic pricing, replay prevention)
+redis = "0.27"
+sha2 = "0.10"
+hex = "0.4"
+
+[features]
+default = []
+export-modules = []
+integration-test = []
+
+[build-dependencies]
+cc = "1.2"
+
+[dev-dependencies]
+tokio = { version = "1.35", features = ["full"] }
