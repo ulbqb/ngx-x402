@@ -15,9 +15,8 @@ crate-type = ["cdylib", "rlib"]
 # x402 protocol types (x402-rs/x402-rs)
 x402-types = "1.0"
 
-# nginx bindings (nginx-sys vendored for local dev; Docker sets NGINX_SOURCE_DIR)
-ngx = "0.5"
-nginx-sys = { version = "0.5", features = ["vendored"] }
+# nginx bindings (vendored for local dev; Docker sets NGINX_SOURCE_DIR)
+ngx = { version = "0.5", features = ["vendored"] }
 
 # async / HTTP
 tokio = { version = "1.35", features = ["rt", "rt-multi-thread", "sync"] }
