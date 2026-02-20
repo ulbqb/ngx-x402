@@ -61,15 +61,14 @@ pub fn get_loc_conf(r: &Request) -> Option<&'static X402Config> {
 }
 
 unsafe extern "C" fn postconfiguration(cf: *mut ngx_conf_t) -> ngx_int_t {
-    let cmcf: Option<&ngx_http_core_main_conf_t> = NgxHttpCoreModule::main_conf(&*cf);
-    let cmcf = match cmcf {
-        Some(c) => c as *const _ as *mut ngx_http_core_main_conf_t,
+    let cmcf = match NgxHttpCoreModule::main_conf_mut(&*cf) {
+        Some(c) => c,
         None => return ngx::ffi::NGX_ERROR as ngx_int_t,
     };
 
-    let h = ngx_array_push(
-        &raw mut (*cmcf).phases[ngx_http_phases_NGX_HTTP_ACCESS_PHASE as usize].handlers,
-    ) as *mut ngx_http_handler_pt;
+    let phase_idx = ngx_http_phases_NGX_HTTP_ACCESS_PHASE as usize;
+    let handlers_ptr = ptr::addr_of_mut!(cmcf.phases[phase_idx].handlers);
+    let h = ngx_array_push(handlers_ptr) as *mut ngx_http_handler_pt;
 
     if h.is_null() {
         return ngx::ffi::NGX_ERROR as ngx_int_t;

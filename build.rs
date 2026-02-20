@@ -16,10 +16,13 @@ fn main() {
         println!("cargo:warning=nginx binary not found, using default build settings");
     }
 
-    // Always compile test stubs - they only matter when linking tests,
-    // and for cdylib/rlib builds the nginx binary provides the real symbols.
-    cc::Build::new()
-        .file("test_stubs.c")
-        .warnings(false)
-        .compile("nginx_test_stubs");
+    // Test stubs define ngx_http_core_module etc. - ONLY for unit/integration tests.
+    // When building the cdylib for nginx load_module, these stubs must NOT be linked,
+    // otherwise our fake ngx_http_core_module overrides nginx's real symbol and breaks loading.
+    if std::env::var("CARGO_FEATURE_INTEGRATION_TEST").is_ok() {
+        cc::Build::new()
+            .file("test_stubs.c")
+            .warnings(false)
+            .compile("nginx_test_stubs");
+    }
 }
