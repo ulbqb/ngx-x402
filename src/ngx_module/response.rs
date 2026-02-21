@@ -42,11 +42,8 @@ p{color:#666;line-height:1.5}
 fn generate_paywall_html(message: &str, requirements: &[PaymentRequirements]) -> String {
     let req = requirements.first();
     let network = req.map(|r| r.network.as_str()).unwrap_or("unknown");
-    let amount = req
-        .map(|r| r.max_amount_required.as_str())
-        .unwrap_or("0");
+    let amount = req.map(|r| r.max_amount_required.as_str()).unwrap_or("0");
     let pay_to = req.map(|r| r.pay_to.as_str()).unwrap_or("unknown");
-
     HTML_PAYWALL_TEMPLATE
         .replace("{{MESSAGE}}", message)
         .replace("{{NETWORK}}", network)
@@ -61,12 +58,10 @@ pub fn send_402_response(
     error_msg: Option<&str>,
 ) -> Result<()> {
     r.set_status(HTTPStatus(402));
-
     let is_browser = is_browser_request(r);
     let error_message = error_msg
         .or(config.description.as_deref())
         .unwrap_or("Payment required");
-
     let requirements_json = serde_json::to_string(&PaymentRequirementsResponse::new(
         error_message,
         requirements.to_vec(),
@@ -74,10 +69,10 @@ pub fn send_402_response(
     .unwrap_or_default();
     let requirements_b64 =
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &requirements_json);
-
+    r.add_header_out("PAYMENT-REQUIRED", &requirements_b64)
+        .ok_or_else(|| ConfigError::new("Failed to set PAYMENT-REQUIRED header"))?;
     r.add_header_out("X-Payment-Required", &requirements_b64)
         .ok_or_else(|| ConfigError::new("Failed to set X-Payment-Required header"))?;
-
     if is_browser {
         let html = generate_paywall_html(error_message, requirements);
         r.add_header_out("Content-Type", "text/html; charset=utf-8")
@@ -91,25 +86,20 @@ pub fn send_402_response(
             .ok_or_else(|| ConfigError::new("Failed to set Content-Type header"))?;
         send_response_body(r, json.as_bytes())?;
     }
-
     Ok(())
 }
 
 pub fn send_response_body(r: &mut Request, body: &[u8]) -> Result<()> {
     use ngx::ffi::{ngx_alloc_chain_link, ngx_create_temp_buf};
-
     let pool = r.pool();
     let body_len = body.len();
-
     if body_len == 0 {
         return Err(ConfigError::new("Cannot send empty response body"));
     }
-
     let buf = unsafe { ngx_create_temp_buf(pool.as_ptr(), body_len) };
     if buf.is_null() {
         return Err(ConfigError::new("Failed to allocate buffer"));
     }
-
     unsafe {
         let buf_ref = &mut *buf;
         if buf_ref.pos.is_null() {
@@ -121,33 +111,23 @@ pub fn send_response_body(r: &mut Request, body: &[u8]) -> Result<()> {
         buf_ref.set_last_buf(1);
         buf_ref.set_last_in_chain(1);
     }
-
     let chain = unsafe { ngx_alloc_chain_link(pool.as_ptr()) };
     if chain.is_null() {
         return Err(ConfigError::new("Failed to allocate chain link"));
     }
-
     unsafe {
         (*chain).buf = buf;
         (*chain).next = core::ptr::null_mut();
     }
-
     r.set_content_length_n(body_len);
-
     let status = r.send_header();
     if status != Status::NGX_OK {
-        return Err(ConfigError::new(format!(
-            "Failed to send header: {status:?}"
-        )));
+        return Err(ConfigError::new(format!("Failed to send header: {status:?}")));
     }
-
     let chain_ref = unsafe { &mut *chain };
     let status = r.output_filter(chain_ref);
     if status != Status::NGX_OK {
-        return Err(ConfigError::new(format!(
-            "Failed to send body: {status:?}"
-        )));
+        return Err(ConfigError::new(format!("Failed to send body: {status:?}")));
     }
-
     Ok(())
 }
