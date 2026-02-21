@@ -1,5 +1,5 @@
 use crate::ngx_module::error::{ConfigError, Result};
-use crate::ngx_module::logging::{log_debug, log_error, log_warn};
+use crate::ngx_module::logging::{log_debug, log_error, log_info, log_warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
@@ -28,8 +28,11 @@ pub struct HttpFacilitatorClient {
     base_url: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct VerifyRequestBody {
+/// Request body for facilitator verify/settle - x402.org expects top-level x402Version
+#[derive(Debug, Serialize)]
+pub struct FacilitatorRequestBody {
+    #[serde(rename = "x402Version")]
+    pub x402_version: u8,
     #[serde(rename = "paymentPayload")]
     pub payment_payload: serde_json::Value,
     #[serde(rename = "paymentRequirements")]
@@ -51,6 +54,10 @@ pub struct SettleResponseBody {
     pub success: bool,
     #[serde(rename = "txHash")]
     pub tx_hash: Option<String>,
+    #[serde(rename = "errorReason")]
+    pub error_reason: Option<String>,
+    #[serde(rename = "errorMessage")]
+    pub error_message: Option<String>,
 }
 
 impl HttpFacilitatorClient {
@@ -66,7 +73,7 @@ impl HttpFacilitatorClient {
 
     pub async fn verify(
         &self,
-        body: &VerifyRequestBody,
+        body: &FacilitatorRequestBody,
         timeout: Duration,
     ) -> Result<VerifyResponseBody> {
         let url = format!("{}/verify", self.base_url);
@@ -93,7 +100,7 @@ impl HttpFacilitatorClient {
 
     pub async fn settle(
         &self,
-        body: &VerifyRequestBody,
+        body: &FacilitatorRequestBody,
         timeout: Duration,
     ) -> Result<SettleResponseBody> {
         let url = format!("{}/settle", self.base_url);
@@ -106,16 +113,30 @@ impl HttpFacilitatorClient {
             .await
             .map_err(|e| ConfigError::new(format!("Facilitator settle request failed: {e}")))?;
 
-        if !resp.status().is_success() {
+        let status = resp.status();
+        let body_text = resp.text().await.unwrap_or_default();
+
+        if !status.is_success() {
+            log_error(
+                None,
+                &format!(
+                    "Facilitator settle HTTP {} body: {}",
+                    status,
+                    body_text.chars().take(500).collect::<String>()
+                ),
+            );
             return Err(ConfigError::new(format!(
-                "Facilitator settle returned status {}",
-                resp.status()
+                "Facilitator settle returned status {status}"
             )));
         }
 
-        resp.json::<SettleResponseBody>()
-            .await
-            .map_err(|e| ConfigError::new(format!("Failed to parse settle response: {e}")))
+        serde_json::from_str(&body_text).map_err(|e| {
+            log_error(
+                None,
+                &format!("Failed to parse settle response: {e}, body: {}", body_text),
+            );
+            ConfigError::new(format!("Failed to parse settle response: {e}"))
+        })
     }
 }
 
@@ -171,8 +192,14 @@ pub async fn verify_payment(
         ConfigError::new(user_errors::INVALID_PAYMENT)
     })?;
 
-    let body = VerifyRequestBody {
-        payment_payload,
+    let x402_version = payment_payload
+        .get("x402Version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2) as u8;
+
+    let body = FacilitatorRequestBody {
+        x402_version,
+        payment_payload: payment_payload.clone(),
         payment_requirements: requirements_json.clone(),
     };
 
@@ -199,6 +226,79 @@ pub async fn verify_payment(
             log_warn(
                 None,
                 &format!("Payment verification timeout after {timeout:?}"),
+            );
+            Err(ConfigError::new(user_errors::TIMEOUT))
+        }
+    }
+}
+
+/// Settle the payment on-chain via the facilitator.
+/// Must be called after verify returns is_valid=true.
+pub async fn settle_payment(
+    payment_b64: &str,
+    requirements_json: &serde_json::Value,
+    facilitator_url: &str,
+    timeout_duration: Option<Duration>,
+) -> Result<SettleResponseBody> {
+    use crate::ngx_module::error::user_errors;
+
+    if payment_b64.is_empty() {
+        return Err(ConfigError::new(user_errors::INVALID_PAYMENT));
+    }
+    if facilitator_url.is_empty() {
+        return Err(ConfigError::new(user_errors::CONFIGURATION_ERROR));
+    }
+
+    let payment_payload: serde_json::Value = serde_json::from_slice(
+        &base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payment_b64)
+            .map_err(|e| {
+                log_error(None, &format!("Failed to decode payment payload: {e}"));
+                ConfigError::new(user_errors::INVALID_PAYMENT)
+            })?,
+    )
+    .map_err(|e| {
+        log_error(None, &format!("Failed to parse payment JSON: {e}"));
+        ConfigError::new(user_errors::INVALID_PAYMENT)
+    })?;
+
+    let x402_version = payment_payload
+        .get("x402Version")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(2) as u8;
+
+    let body = FacilitatorRequestBody {
+        x402_version,
+        payment_payload,
+        payment_requirements: requirements_json.clone(),
+    };
+
+    let client = get_facilitator_client(facilitator_url)?;
+    let timeout = timeout_duration.unwrap_or(DEFAULT_FACILITATOR_TIMEOUT);
+
+    let settle_timeout = timeout.max(Duration::from_secs(30));
+
+    match tokio::time::timeout(settle_timeout, client.settle(&body, settle_timeout)).await {
+        Ok(Ok(response)) => {
+            log_info(
+                None,
+                &format!(
+                    "Facilitator settle: success={} txHash={:?} errorReason={:?} errorMessage={:?}",
+                    response.success,
+                    response.tx_hash.as_deref().unwrap_or("none"),
+                    response.error_reason.as_deref().unwrap_or("none"),
+                    response.error_message.as_deref().unwrap_or("none")
+                ),
+            );
+            Ok(response)
+        }
+        Ok(Err(e)) => {
+            log_error(None, &format!("Payment settlement failed: {e}"));
+            Err(ConfigError::new(user_errors::PAYMENT_VERIFICATION_FAILED))
+        }
+        Err(_) => {
+            log_warn(
+                None,
+                &format!("Payment settlement timeout after {settle_timeout:?}"),
             );
             Err(ConfigError::new(user_errors::TIMEOUT))
         }
