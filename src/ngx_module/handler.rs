@@ -6,7 +6,7 @@ use crate::ngx_module::redis;
 use crate::ngx_module::request::{build_full_url, get_header_value, infer_mime_type};
 use crate::ngx_module::requirements::create_requirements;
 use crate::ngx_module::response::{send_402_response, send_response_body};
-use crate::ngx_module::runtime::{get_runtime, verify_payment};
+use crate::ngx_module::runtime::{get_runtime, settle_payment, verify_payment};
 use ngx::http::{HTTPStatus, Request};
 use rust_decimal::prelude::ToPrimitive;
 use std::time::Instant;
@@ -181,6 +181,83 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
         if response.is_valid {
             log_info(Some(r), "Payment verified successfully");
             metrics.record_verification_success();
+
+            // Settle payment on-chain (execute the actual USDC transfer)
+            let settle_result = runtime.block_on(async {
+                settle_payment(
+                    &payment_b64,
+                    &requirements_json,
+                    facilitator_url,
+                    timeout,
+                )
+                .await
+            });
+
+            match settle_result {
+                Ok(settle) => {
+                    if !settle.success {
+                        let err_info = [
+                            settle.error_reason.as_deref().unwrap_or(""),
+                            settle.error_message.as_deref().unwrap_or(""),
+                        ]
+                        .iter()
+                        .filter(|s| !s.is_empty())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                        log_error(
+                            Some(r),
+                            &format!(
+                                "Payment settle failed: success=false txHash={:?} {}",
+                                settle.tx_hash.as_deref().unwrap_or("none"),
+                                if err_info.is_empty() {
+                                    "".to_string()
+                                } else {
+                                    format!("errorReason/Message: {err_info}")
+                                }
+                            ),
+                        );
+                        metrics.record_verification_failed();
+                        let err_msg = if err_info.is_empty() {
+                            user_errors::PAYMENT_VERIFICATION_FAILED.to_string()
+                        } else {
+                            format!(
+                                "{} (Facilitator: {err_info})",
+                                user_errors::PAYMENT_VERIFICATION_FAILED
+                            )
+                        };
+                        send_402_response(
+                            r,
+                            requirements_slice,
+                            &working_config,
+                            Some(&err_msg),
+                        )?;
+                        return Ok(HandlerResult::ResponseSent);
+                    }
+                    log_info(
+                        Some(r),
+                        &format!(
+                            "Payment settled on-chain, txHash={:?}",
+                            settle.tx_hash.as_deref().unwrap_or("none")
+                        ),
+                    );
+                }
+                Err(e) => {
+                    log_error(Some(r), &format!("Payment settlement failed: {e}"));
+                    metrics.record_verification_failed();
+                    let err_msg = format!(
+                        "{} (Facilitator error: {e})",
+                        user_errors::PAYMENT_VERIFICATION_FAILED
+                    );
+                    send_402_response(
+                        r,
+                        requirements_slice,
+                        &working_config,
+                        Some(&err_msg),
+                    )?;
+                    return Ok(HandlerResult::ResponseSent);
+                }
+            }
 
             // Store as used for replay prevention
             if redis::is_redis_configured() {
