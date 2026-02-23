@@ -49,7 +49,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 COPY --from=builder /nginx/objs/nginx /usr/sbin/nginx
 COPY --from=builder /build/target/release/libngx_x402.so /usr/lib/nginx/modules/
-COPY nginx.conf.example /etc/nginx/nginx.conf
+COPY nginx.conf /etc/nginx/nginx.conf
 
 EXPOSE 80
 CMD ["nginx", "-g", "daemon off;"]
