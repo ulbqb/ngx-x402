@@ -1,4 +1,5 @@
 /target
+nginx.conf
 *.so
 *.dylib
 .env
