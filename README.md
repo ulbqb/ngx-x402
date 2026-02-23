@@ -16,6 +16,9 @@ Nginx module for the x402 HTTP micropayment protocol. Acts as a reverse proxy th
 ## Quick Start
 
 ```bash
+# First-time setup: copy the example config and edit x402_pay_to with your wallet address
+cp nginx.conf.example nginx.conf
+
 docker-compose up
 ```
 

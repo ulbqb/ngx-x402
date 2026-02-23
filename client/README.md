@@ -13,7 +13,7 @@ cp .env.example .env
 
 - Base Sepolia testnet ETH (for gas)
 - Base Sepolia USDC (from [CDP Faucet](https://portal.cdp.coinbase.com/products/faucet))
-- Update nginx.conf `x402_pay_to` with your receiving address
+- Copy nginx.conf.example to nginx.conf and update `x402_pay_to` with your receiving address
 
 ## Run
 
