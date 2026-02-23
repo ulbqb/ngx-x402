@@ -68,11 +68,11 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
 
     let full_url = build_full_url(r);
     let resource = if let Some(ref configured) = working_config.resource {
-        configured.as_str()
+        configured.clone()
     } else if let Some(ref url) = full_url {
-        url.as_str()
+        url.clone()
     } else {
-        r.path().to_str().unwrap_or("/")
+        r.path().to_str().unwrap_or("/").to_string()
     };
 
     let mime_type = infer_mime_type(r);
@@ -82,11 +82,10 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
         &format!("x402 handler processing: resource={resource}, mime={mime_type}"),
     );
 
-    let requirements =
-        create_requirements(&working_config, resource, Some(&mime_type)).map_err(|e| {
-            log_error(Some(r), &format!("Failed to create requirements: {e}"));
-            e
-        })?;
+    let requirements = create_requirements(&working_config, &resource).map_err(|e| {
+        log_error(Some(r), &format!("Failed to create requirements: {e}"));
+        e
+    })?;
     let requirements_slice = std::slice::from_ref(&requirements);
 
     if let Some(amount_f64) = working_config.amount.and_then(|a| a.to_f64()) {
@@ -108,6 +107,8 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
                 r,
                 requirements_slice,
                 &working_config,
+                &resource,
+                &mime_type,
                 Some(user_errors::INVALID_PAYMENT),
             )?;
             return Ok(HandlerResult::ResponseSent);
@@ -122,18 +123,17 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
                 r,
                 requirements_slice,
                 &working_config,
+                &resource,
+                &mime_type,
                 Some(user_errors::REPLAY_DETECTED),
             )?;
             return Ok(HandlerResult::ResponseSent);
         }
 
-        let facilitator_url = working_config
-            .facilitator_url
-            .as_deref()
-            .ok_or_else(|| {
-                log_error(Some(r), "Facilitator URL not configured");
-                ConfigError::new("Facilitator URL not configured")
-            })?;
+        let facilitator_url = working_config.facilitator_url.as_deref().ok_or_else(|| {
+            log_error(Some(r), "Facilitator URL not configured");
+            ConfigError::new("Facilitator URL not configured")
+        })?;
 
         let requirements_json = serde_json::to_value(&requirements)
             .map_err(|e| ConfigError::new(format!("Failed to serialize requirements: {e}")))?;
@@ -183,13 +183,7 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
 
             // Settle payment on-chain (execute the actual USDC transfer)
             let settle_result = runtime.block_on(async {
-                settle_payment(
-                    &payment_b64,
-                    &requirements_json,
-                    facilitator_url,
-                    timeout,
-                )
-                .await
+                settle_payment(&payment_b64, &requirements_json, facilitator_url, timeout).await
             });
 
             match settle_result {
@@ -229,6 +223,8 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
                             r,
                             requirements_slice,
                             &working_config,
+                            &resource,
+                            &mime_type,
                             Some(&err_msg),
                         )?;
                         return Ok(HandlerResult::ResponseSent);
@@ -252,6 +248,8 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
                         r,
                         requirements_slice,
                         &working_config,
+                        &resource,
+                        &mime_type,
                         Some(&err_msg),
                     )?;
                     return Ok(HandlerResult::ResponseSent);
@@ -273,6 +271,8 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
                 r,
                 requirements_slice,
                 &working_config,
+                &resource,
+                &mime_type,
                 Some(user_errors::PAYMENT_VERIFICATION_FAILED),
             )?;
             Ok(HandlerResult::ResponseSent)
@@ -280,7 +280,14 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
     } else {
         log_debug(Some(r), "No payment header found, sending 402");
         metrics.record_402_response();
-        send_402_response(r, requirements_slice, &working_config, None)?;
+        send_402_response(
+            r,
+            requirements_slice,
+            &working_config,
+            &resource,
+            &mime_type,
+            None,
+        )?;
         Ok(HandlerResult::ResponseSent)
     }
 }

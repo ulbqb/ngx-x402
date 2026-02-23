@@ -89,26 +89,22 @@ fn parse_ngx_str(s: ngx_str_t) -> Result<Option<String>> {
 impl X402Config {
     pub fn parse(&self) -> Result<ParsedX402Config> {
         let amount = if let Some(s) = parse_ngx_str(self.amount_str)? {
-            let amount = crate::config::validation::parse_amount(&s)
-                .map_err(ConfigError::new)?;
-            crate::config::validation::validate_amount(amount)
-                .map_err(ConfigError::new)?;
+            let amount = crate::config::validation::parse_amount(&s).map_err(ConfigError::new)?;
+            crate::config::validation::validate_amount(amount).map_err(ConfigError::new)?;
             Some(amount)
         } else {
             None
         };
 
         let pay_to = if let Some(s) = parse_ngx_str(self.pay_to_str)? {
-            crate::config::validation::validate_ethereum_address(&s)
-                .map_err(ConfigError::new)?;
+            crate::config::validation::validate_ethereum_address(&s).map_err(ConfigError::new)?;
             Some(s)
         } else {
             None
         };
 
         let facilitator_url = if let Some(s) = parse_ngx_str(self.facilitator_url_str)? {
-            crate::config::validation::validate_url(&s)
-                .map_err(ConfigError::new)?;
+            crate::config::validation::validate_url(&s).map_err(ConfigError::new)?;
             Some(s)
         } else {
             None
@@ -120,8 +116,7 @@ impl X402Config {
             let id = s
                 .parse::<u64>()
                 .map_err(|e| ConfigError::new(format!("Invalid network_id: {e}")))?;
-            crate::config::validation::chain_id_to_network(id)
-                .map_err(ConfigError::new)?;
+            crate::config::validation::chain_id_to_network(id).map_err(ConfigError::new)?;
             Some(id)
         } else {
             None
@@ -130,8 +125,7 @@ impl X402Config {
         let network = if network_id.is_some() {
             None
         } else if let Some(s) = parse_ngx_str(self.network_str)? {
-            crate::config::validation::validate_network(&s)
-                .map_err(ConfigError::new)?;
+            crate::config::validation::validate_network(&s).map_err(ConfigError::new)?;
             Some(s)
         } else {
             None
@@ -140,8 +134,7 @@ impl X402Config {
         let resource = parse_ngx_str(self.resource_str)?;
 
         let asset = if let Some(s) = parse_ngx_str(self.asset_str)? {
-            crate::config::validation::validate_ethereum_address(&s)
-                .map_err(ConfigError::new)?;
+            crate::config::validation::validate_ethereum_address(&s).map_err(ConfigError::new)?;
             Some(s)
         } else {
             None
@@ -173,20 +166,19 @@ impl X402Config {
             None
         };
 
-        let facilitator_fallback =
-            if let Some(s) = parse_ngx_str(self.facilitator_fallback_str)? {
-                match s.to_lowercase().as_str() {
-                    "error" | "500" => FacilitatorFallback::Error,
-                    "pass" | "bypass" | "through" => FacilitatorFallback::Pass,
-                    _ => {
-                        return Err(ConfigError::new(
-                            "facilitator_fallback must be 'error' or 'pass'",
-                        ))
-                    }
+        let facilitator_fallback = if let Some(s) = parse_ngx_str(self.facilitator_fallback_str)? {
+            match s.to_lowercase().as_str() {
+                "error" | "500" => FacilitatorFallback::Error,
+                "pass" | "bypass" | "through" => FacilitatorFallback::Pass,
+                _ => {
+                    return Err(ConfigError::new(
+                        "facilitator_fallback must be 'error' or 'pass'",
+                    ))
                 }
-            } else {
-                FacilitatorFallback::Error
-            };
+            }
+        } else {
+            FacilitatorFallback::Error
+        };
 
         let ttl = if let Some(s) = parse_ngx_str(self.ttl_str)? {
             let val = s

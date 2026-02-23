@@ -1,5 +1,6 @@
 use rust_decimal::Decimal;
 use std::str::FromStr;
+use x402_types::chain::ChainId;
 
 pub fn validate_amount(amount: Decimal) -> Result<(), String> {
     if amount < Decimal::ZERO {
@@ -37,13 +38,21 @@ pub fn validate_network(network: &str) -> Result<(), String> {
         return Err("Network cannot be empty".to_string());
     }
 
-    // Accept CAIP-2 format (e.g., "eip155:8453") or friendly names (e.g., "base-sepolia")
+    // Accept CAIP-2 format (e.g., "eip155:8453")
     if net.contains(':') {
-        let parts: Vec<&str> = net.splitn(2, ':').collect();
-        if parts.len() != 2 || parts[0].is_empty() || parts[1].is_empty() {
+        let chain =
+            ChainId::from_str(net).map_err(|_| format!("Invalid CAIP-2 network format: {net}"))?;
+        if chain.namespace().is_empty() || chain.reference().is_empty() {
             return Err(format!("Invalid CAIP-2 network format: {net}"));
         }
+        return Ok(());
     }
+
+    // Or known friendly names supported by x402-types (e.g., "base-sepolia")
+    if ChainId::from_network_name(net).is_none() {
+        return Err(format!("Unsupported network name: {net}"));
+    }
+
     Ok(())
 }
 
@@ -70,15 +79,10 @@ pub fn validate_resource_path(path: &str) -> Result<String, String> {
 }
 
 pub fn chain_id_to_network(chain_id: u64) -> Result<&'static str, String> {
-    match chain_id {
-        8453 => Ok("base"),
-        84532 => Ok("base-sepolia"),
-        137 => Ok("polygon"),
-        80002 => Ok("polygon-amoy"),
-        43114 => Ok("avalanche"),
-        43113 => Ok("avalanche-fuji"),
-        _ => Err(format!("Unsupported chain ID: {chain_id}")),
-    }
+    let chain = ChainId::new("eip155", chain_id.to_string());
+    chain
+        .as_network_name()
+        .ok_or_else(|| format!("Unsupported chain ID: {chain_id}"))
 }
 
 pub fn parse_amount(s: &str) -> Result<Decimal, String> {

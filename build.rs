@@ -9,11 +9,8 @@ fn main() {
     if let Ok(output) = Command::new(&nginx_bin).arg("-v").output() {
         let version_str = String::from_utf8_lossy(&output.stderr);
         if let Some(version) = version_str.strip_prefix("nginx version: nginx/") {
-            let version = version.trim();
-            println!("cargo:warning=Detected nginx version: {version}");
+            let _ = version.trim();
         }
-    } else {
-        println!("cargo:warning=nginx binary not found, using default build settings");
     }
 
     // Test stubs define ngx_http_core_module etc. - ONLY for unit/integration tests.

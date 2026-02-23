@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
+use x402_types::proto::v2::{VerifyRequest, X402Version2};
 
 pub static RUNTIME: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
 
@@ -28,16 +29,7 @@ pub struct HttpFacilitatorClient {
     base_url: String,
 }
 
-/// Request body for facilitator verify/settle - x402.org expects top-level x402Version
-#[derive(Debug, Serialize)]
-pub struct FacilitatorRequestBody {
-    #[serde(rename = "x402Version")]
-    pub x402_version: u8,
-    #[serde(rename = "paymentPayload")]
-    pub payment_payload: serde_json::Value,
-    #[serde(rename = "paymentRequirements")]
-    pub payment_requirements: serde_json::Value,
-}
+type FacilitatorRequestBody = VerifyRequest<serde_json::Value, serde_json::Value>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct VerifyResponseBody {
@@ -181,24 +173,20 @@ pub async fn verify_payment(
     }
 
     let payment_payload: serde_json::Value = serde_json::from_slice(
-        &base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payment_b64)
-            .map_err(|e| {
+        &base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payment_b64).map_err(
+            |e| {
                 log_error(None, &format!("Failed to decode payment payload: {e}"));
                 ConfigError::new(user_errors::INVALID_PAYMENT)
-            })?,
+            },
+        )?,
     )
     .map_err(|e| {
         log_error(None, &format!("Failed to parse payment JSON: {e}"));
         ConfigError::new(user_errors::INVALID_PAYMENT)
     })?;
 
-    let x402_version = payment_payload
-        .get("x402Version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(2) as u8;
-
     let body = FacilitatorRequestBody {
-        x402_version,
+        x402_version: X402Version2,
         payment_payload: payment_payload.clone(),
         payment_requirements: requirements_json.clone(),
     };
@@ -250,24 +238,20 @@ pub async fn settle_payment(
     }
 
     let payment_payload: serde_json::Value = serde_json::from_slice(
-        &base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payment_b64)
-            .map_err(|e| {
+        &base64::Engine::decode(&base64::engine::general_purpose::STANDARD, payment_b64).map_err(
+            |e| {
                 log_error(None, &format!("Failed to decode payment payload: {e}"));
                 ConfigError::new(user_errors::INVALID_PAYMENT)
-            })?,
+            },
+        )?,
     )
     .map_err(|e| {
         log_error(None, &format!("Failed to parse payment JSON: {e}"));
         ConfigError::new(user_errors::INVALID_PAYMENT)
     })?;
 
-    let x402_version = payment_payload
-        .get("x402Version")
-        .and_then(|v| v.as_u64())
-        .unwrap_or(2) as u8;
-
     let body = FacilitatorRequestBody {
-        x402_version,
+        x402_version: X402Version2,
         payment_payload,
         payment_requirements: requirements_json.clone(),
     };

@@ -2,81 +2,40 @@ use crate::config::validation::chain_id_to_network;
 use crate::ngx_module::config::ParsedX402Config;
 use crate::ngx_module::error::{ConfigError, Result};
 use rust_decimal::Decimal;
-use serde::{Deserialize, Serialize};
+use std::str::FromStr;
+use x402_types::chain::ChainId;
+use x402_types::proto::v2::{PaymentRequired, ResourceInfo, X402Version2};
 
-/// Payment requirements sent to the client in the 402 response.
-///
-/// Uses the x402 v2 format with CAIP-2 chain IDs.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct PaymentRequirements {
-    pub scheme: String,
-    pub network: String,
-    /// Amount in smallest unit (e.g. satoshis for USDC 6 decimals)
-    pub amount: String,
-    pub resource: String,
-    pub description: String,
-    pub mime_type: Option<String>,
-    pub pay_to: String,
-    pub max_timeout_seconds: u32,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub asset: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub extra: Option<serde_json::Value>,
-}
-
-/// 402 response body as per x402 protocol.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PaymentRequirementsResponse {
-    #[serde(rename = "x402Version")]
-    pub x402_version: u8,
-    pub error: String,
-    pub accepts: Vec<PaymentRequirements>,
-}
-
-impl PaymentRequirementsResponse {
-    pub fn new(error: &str, accepts: Vec<PaymentRequirements>) -> Self {
-        Self {
-            x402_version: 2,
-            error: error.to_string(),
-            accepts,
-        }
-    }
-}
+pub type PaymentRequirements = x402_types::proto::v2::PaymentRequirements;
+pub type PaymentRequiredResponse = PaymentRequired<PaymentRequirements>;
 
 fn amount_to_smallest_unit(amount: Decimal, decimals: u8) -> String {
     let multiplier = Decimal::from(10u64.pow(decimals as u32));
     (amount * multiplier).normalize().to_string()
 }
 
-fn resolve_network(config: &ParsedX402Config) -> Result<String> {
+fn resolve_network(config: &ParsedX402Config) -> Result<ChainId> {
     if let Some(chain_id) = config.network_id {
         chain_id_to_network(chain_id).map_err(ConfigError::new)?;
-        Ok(format!("eip155:{chain_id}"))
+        Ok(ChainId::new("eip155", chain_id.to_string()))
     } else if let Some(ref net) = config.network {
         if net.contains(':') {
-            Ok(net.clone())
+            ChainId::from_str(net)
+                .map_err(|_| ConfigError::new(format!("Invalid CAIP-2 network format: {net}")))
         } else {
-            match net.as_str() {
-                "base" => Ok("eip155:8453".to_string()),
-                "base-sepolia" => Ok("eip155:84532".to_string()),
-                "polygon" => Ok("eip155:137".to_string()),
-                "polygon-amoy" => Ok("eip155:80002".to_string()),
-                "avalanche" => Ok("eip155:43114".to_string()),
-                "avalanche-fuji" => Ok("eip155:43113".to_string()),
-                _ => Ok(net.clone()),
-            }
+            ChainId::from_network_name(net)
+                .ok_or_else(|| ConfigError::new(format!("Unsupported network name: {net}")))
         }
     } else {
-        Ok("eip155:8453".to_string())
+        Ok(ChainId::new("eip155", "8453"))
     }
 }
 
-fn default_usdc_address(network: &str) -> Option<&'static str> {
-    match network {
-        "eip155:8453" => Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
-        "eip155:84532" => Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),
-        "eip155:137" => Some("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
+fn default_usdc_address(network: &ChainId) -> Option<&'static str> {
+    match (network.namespace.as_str(), network.reference.as_str()) {
+        ("eip155", "8453") => Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913"),
+        ("eip155", "84532") => Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e"),
+        ("eip155", "137") => Some("0x3c499c542cEF5E3811e1192ce70d8cC03d5c3359"),
         _ => None,
     }
 }
@@ -106,7 +65,6 @@ fn eip712_extra_for_asset(asset: &str) -> Option<serde_json::Value> {
 pub fn create_requirements(
     config: &ParsedX402Config,
     resource: &str,
-    mime_type: Option<&str>,
 ) -> Result<PaymentRequirements> {
     let amount = config
         .amount
@@ -130,20 +88,39 @@ pub fn create_requirements(
     };
     let resource = crate::config::validation::validate_resource_path(resource)
         .map_err(|e| ConfigError::new(e))?;
+    if resource.is_empty() {
+        return Err(ConfigError::new("Resource path cannot be empty"));
+    }
     let max_timeout_seconds = config.ttl.unwrap_or(60);
-    let mime = mime_type.unwrap_or("application/json");
+    let extra = eip712_extra_for_asset(&asset_address);
     Ok(PaymentRequirements {
         scheme: "exact".to_string(),
         network,
         amount: amount_str,
-        resource,
-        description: config.description.as_deref().unwrap_or("").to_string(),
-        mime_type: Some(mime.to_string()),
         pay_to: pay_to.to_lowercase(),
-        max_timeout_seconds,
-        asset: if asset_address.is_empty() { None } else { Some(asset_address.clone()) },
-        extra: if asset_address.is_empty() { None } else { eip712_extra_for_asset(&asset_address) },
+        max_timeout_seconds: max_timeout_seconds as u64,
+        asset: asset_address,
+        extra,
     })
+}
+
+pub fn create_payment_required_response(
+    error: &str,
+    accepts: Vec<PaymentRequirements>,
+    resource_url: &str,
+    description: &str,
+    mime_type: &str,
+) -> PaymentRequiredResponse {
+    PaymentRequiredResponse {
+        x402_version: X402Version2,
+        error: Some(error.to_string()),
+        resource: ResourceInfo {
+            description: description.to_string(),
+            mime_type: mime_type.to_string(),
+            url: resource_url.to_string(),
+        },
+        accepts,
+    }
 }
 
 #[cfg(test)]
@@ -200,17 +177,12 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api/weather", Some("application/json")).unwrap();
+        let req = create_requirements(&config, "/api/weather").unwrap();
         assert_eq!(req.scheme, "exact");
-        assert_eq!(req.network, "eip155:8453");
+        assert_eq!(req.network.to_string(), "eip155:8453");
         assert_eq!(req.amount, "1000");
-        assert_eq!(req.resource, "/api/weather");
-        assert_eq!(req.mime_type.as_deref(), Some("application/json"));
         assert_eq!(req.max_timeout_seconds, 60);
-        assert_eq!(
-            req.asset.as_deref(),
-            Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
-        );
+        assert_eq!(req.asset, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
     }
 
     #[test]
@@ -225,8 +197,8 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api", None).unwrap();
-        assert_eq!(req.network, "eip155:8453");
+        let req = create_requirements(&config, "/api").unwrap();
+        assert_eq!(req.network.to_string(), "eip155:8453");
     }
 
     #[test]
@@ -241,8 +213,8 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api", None).unwrap();
-        assert_eq!(req.network, "eip155:8453");
+        let req = create_requirements(&config, "/api").unwrap();
+        assert_eq!(req.network.to_string(), "eip155:8453");
     }
 
     #[test]
@@ -257,11 +229,8 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api", None).unwrap();
-        assert_eq!(
-            req.asset.as_deref(),
-            Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
-        );
+        let req = create_requirements(&config, "/api").unwrap();
+        assert_eq!(req.asset, "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913");
         assert!(req.extra.is_some());
     }
 
@@ -277,11 +246,8 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api", None).unwrap();
-        assert_eq!(
-            req.asset.as_deref(),
-            Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
-        );
+        let req = create_requirements(&config, "/api").unwrap();
+        assert_eq!(req.asset, "0x036CbD53842c5426634e7929541eC2318f3dCF7e");
         let extra = req.extra.as_ref().unwrap();
         assert_eq!(extra.get("name").and_then(|v| v.as_str()), Some("USDC"));
     }
@@ -298,7 +264,7 @@ mod tests {
             None,
             None,
         );
-        assert!(create_requirements(&config, "/api", None).is_err());
+        assert!(create_requirements(&config, "/api").is_err());
     }
 
     #[test]
@@ -313,7 +279,7 @@ mod tests {
             None,
             None,
         );
-        assert!(create_requirements(&config, "/api", None).is_err());
+        assert!(create_requirements(&config, "/api").is_err());
     }
 
     #[test]
@@ -328,7 +294,7 @@ mod tests {
             None,
             None,
         );
-        assert!(create_requirements(&config, "/api", None).is_err());
+        assert!(create_requirements(&config, "/api").is_err());
     }
 
     #[test]
@@ -343,7 +309,7 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api/weather", None).unwrap();
+        let req = create_requirements(&config, "/api/weather").unwrap();
         let json = serde_json::to_value(&req).unwrap();
         assert!(json.get("amount").is_some(), "amount must be present (v2)");
         assert!(
@@ -366,10 +332,15 @@ mod tests {
                 None,
             ),
             "/api",
-            None,
         )
         .unwrap();
-        let resp = PaymentRequirementsResponse::new("Payment required", vec![req]);
+        let resp = create_payment_required_response(
+            "Payment required",
+            vec![req],
+            "/api",
+            "desc",
+            "application/json",
+        );
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(
             json.get("x402Version").and_then(|v| v.as_u64()),
@@ -390,8 +361,9 @@ mod tests {
             None,
             None,
         );
-        let req = create_requirements(&config, "/api", None).unwrap();
-        let resp = PaymentRequirementsResponse::new("Pay", vec![req]);
+        let req = create_requirements(&config, "/api").unwrap();
+        let resp =
+            create_payment_required_response("Pay", vec![req], "/api", "desc", "application/json");
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["x402Version"], 2);
         let accept = &json["accepts"][0];

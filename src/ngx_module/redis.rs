@@ -48,8 +48,7 @@ pub fn is_payment_used(payment_b64: &str) -> bool {
 
 /// Store a payment signature as used with TTL.
 pub fn store_payment_as_used(payment_b64: &str, ttl_seconds: u64) -> Result<()> {
-    let mut conn = get_connection()
-        .ok_or_else(|| ConfigError::new("Redis not configured"))?;
+    let mut conn = get_connection().ok_or_else(|| ConfigError::new("Redis not configured"))?;
 
     let hash = payment_hash(payment_b64);
     let key = format!("x402:payment_sig:{hash}");
