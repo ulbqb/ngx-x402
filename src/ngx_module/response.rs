@@ -1,10 +1,13 @@
 use crate::ngx_module::config::ParsedX402Config;
 use crate::ngx_module::error::{ConfigError, Result};
+#[cfg(not(test))]
 use crate::ngx_module::request::is_browser_request;
 use crate::ngx_module::requirements::{create_payment_required_response, PaymentRequirements};
 #[cfg(not(test))]
 use ngx::core::Status;
-use ngx::http::{HTTPStatus, Request};
+#[cfg(not(test))]
+use ngx::http::HTTPStatus;
+use ngx::http::Request;
 
 const HTML_PAYWALL_TEMPLATE: &str = r#"<!DOCTYPE html>
 <html lang="en">
@@ -64,6 +67,7 @@ pub fn send_402_response(
 ) -> Result<()> {
     #[cfg(test)]
     {
+        let _ = r;
         let error_message = error_msg
             .or(config.description.as_deref())
             .unwrap_or("Payment required");

@@ -1,5 +1,5 @@
 use ngx::ffi::{
-    ngx_array_push, ngx_conf_t, ngx_http_core_main_conf_t, ngx_http_handler_pt, ngx_http_module_t,
+    ngx_array_push, ngx_conf_t, ngx_http_handler_pt, ngx_http_module_t,
     ngx_http_phases_NGX_HTTP_ACCESS_PHASE, ngx_int_t, ngx_module_t, NGX_HTTP_MODULE,
 };
 use ngx::http::{
