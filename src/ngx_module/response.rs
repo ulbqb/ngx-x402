@@ -1,7 +1,8 @@
 use crate::ngx_module::config::ParsedX402Config;
 use crate::ngx_module::error::{ConfigError, Result};
 use crate::ngx_module::request::is_browser_request;
-use crate::ngx_module::requirements::{PaymentRequirements, PaymentRequirementsResponse};
+use crate::ngx_module::requirements::{create_payment_required_response, PaymentRequirements};
+#[cfg(not(test))]
 use ngx::core::Status;
 use ngx::http::{HTTPStatus, Request};
 
@@ -41,12 +42,14 @@ p{color:#666;line-height:1.5}
 
 pub(crate) fn generate_paywall_html(message: &str, requirements: &[PaymentRequirements]) -> String {
     let req = requirements.first();
-    let network = req.map(|r| r.network.as_str()).unwrap_or("unknown");
+    let network = req
+        .map(|r| r.network.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
     let amount = req.map(|r| r.amount.as_str()).unwrap_or("0");
     let pay_to = req.map(|r| r.pay_to.as_str()).unwrap_or("unknown");
     HTML_PAYWALL_TEMPLATE
         .replace("{{MESSAGE}}", message)
-        .replace("{{NETWORK}}", network)
+        .replace("{{NETWORK}}", &network)
         .replace("{{AMOUNT}}", amount)
         .replace("{{PAY_TO}}", pay_to)
 }
@@ -55,38 +58,65 @@ pub fn send_402_response(
     r: &mut Request,
     requirements: &[PaymentRequirements],
     config: &ParsedX402Config,
+    resource_url: &str,
+    mime_type: &str,
     error_msg: Option<&str>,
 ) -> Result<()> {
-    r.set_status(HTTPStatus(402));
-    let is_browser = is_browser_request(r);
-    let error_message = error_msg
-        .or(config.description.as_deref())
-        .unwrap_or("Payment required");
-    let requirements_json = serde_json::to_string(&PaymentRequirementsResponse::new(
-        error_message,
-        requirements.to_vec(),
-    ))
-    .unwrap_or_default();
-    let requirements_b64 =
-        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &requirements_json);
-    r.add_header_out("PAYMENT-REQUIRED", &requirements_b64)
-        .ok_or_else(|| ConfigError::new("Failed to set PAYMENT-REQUIRED header"))?;
-    if is_browser {
-        let html = generate_paywall_html(error_message, requirements);
-        r.add_header_out("Content-Type", "text/html; charset=utf-8")
-            .ok_or_else(|| ConfigError::new("Failed to set Content-Type header"))?;
-        send_response_body(r, html.as_bytes())?;
-    } else {
-        let response = PaymentRequirementsResponse::new(error_message, requirements.to_vec());
-        let json = serde_json::to_string(&response)
+    #[cfg(test)]
+    {
+        let error_message = error_msg
+            .or(config.description.as_deref())
+            .unwrap_or("Payment required");
+        let response = create_payment_required_response(
+            error_message,
+            requirements.to_vec(),
+            resource_url,
+            config.description.as_deref().unwrap_or(""),
+            mime_type,
+        );
+        let _ = serde_json::to_string(&response)
             .map_err(|_| ConfigError::new("Failed to serialize response"))?;
-        r.add_header_out("Content-Type", "application/json; charset=utf-8")
-            .ok_or_else(|| ConfigError::new("Failed to set Content-Type header"))?;
-        send_response_body(r, json.as_bytes())?;
+        return Ok(());
     }
-    Ok(())
+
+    #[cfg(not(test))]
+    {
+        r.set_status(HTTPStatus(402));
+        let is_browser = is_browser_request(r);
+        let error_message = error_msg
+            .or(config.description.as_deref())
+            .unwrap_or("Payment required");
+        let response = create_payment_required_response(
+            error_message,
+            requirements.to_vec(),
+            resource_url,
+            config.description.as_deref().unwrap_or(""),
+            mime_type,
+        );
+        let requirements_json = serde_json::to_string(&response).unwrap_or_default();
+        let requirements_b64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            &requirements_json,
+        );
+        r.add_header_out("PAYMENT-REQUIRED", &requirements_b64)
+            .ok_or_else(|| ConfigError::new("Failed to set PAYMENT-REQUIRED header"))?;
+        if is_browser {
+            let html = generate_paywall_html(error_message, requirements);
+            r.add_header_out("Content-Type", "text/html; charset=utf-8")
+                .ok_or_else(|| ConfigError::new("Failed to set Content-Type header"))?;
+            send_response_body(r, html.as_bytes())?;
+        } else {
+            let json = serde_json::to_string(&response)
+                .map_err(|_| ConfigError::new("Failed to serialize response"))?;
+            r.add_header_out("Content-Type", "application/json; charset=utf-8")
+                .ok_or_else(|| ConfigError::new("Failed to set Content-Type header"))?;
+            send_response_body(r, json.as_bytes())?;
+        }
+        Ok(())
+    }
 }
 
+#[cfg(not(test))]
 pub fn send_response_body(r: &mut Request, body: &[u8]) -> Result<()> {
     use ngx::ffi::{ngx_alloc_chain_link, ngx_create_temp_buf};
     let pool = r.pool();
@@ -120,12 +150,22 @@ pub fn send_response_body(r: &mut Request, body: &[u8]) -> Result<()> {
     r.set_content_length_n(body_len);
     let status = r.send_header();
     if status != Status::NGX_OK {
-        return Err(ConfigError::new(format!("Failed to send header: {status:?}")));
+        return Err(ConfigError::new(format!(
+            "Failed to send header: {status:?}"
+        )));
     }
     let chain_ref = unsafe { &mut *chain };
     let status = r.output_filter(chain_ref);
     if status != Status::NGX_OK {
         return Err(ConfigError::new(format!("Failed to send body: {status:?}")));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+pub fn send_response_body(_r: &mut Request, body: &[u8]) -> Result<()> {
+    if body.is_empty() {
+        return Err(ConfigError::new("Cannot send empty response body"));
     }
     Ok(())
 }
@@ -138,14 +178,11 @@ mod tests {
     fn test_generate_paywall_html_with_requirements() {
         let req = PaymentRequirements {
             scheme: "exact".to_string(),
-            network: "eip155:8453".to_string(),
+            network: "eip155:8453".parse().unwrap(),
             amount: "1000".to_string(),
-            resource: "/api/weather".to_string(),
-            description: "".to_string(),
-            mime_type: Some("application/json".to_string()),
             pay_to: "0x1234567890abcdef1234567890abcdef12345678".to_string(),
             max_timeout_seconds: 60,
-            asset: None,
+            asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913".to_string(),
             extra: None,
         };
         let html = generate_paywall_html("Payment required", &[req]);

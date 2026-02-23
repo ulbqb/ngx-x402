@@ -1,7 +1,6 @@
 use ngx::ffi::{
-    ngx_array_push, ngx_conf_t, ngx_http_core_main_conf_t, ngx_http_handler_pt,
-    ngx_http_module_t, ngx_http_phases_NGX_HTTP_ACCESS_PHASE, ngx_int_t, ngx_module_t,
-    NGX_HTTP_MODULE,
+    ngx_array_push, ngx_conf_t, ngx_http_core_main_conf_t, ngx_http_handler_pt, ngx_http_module_t,
+    ngx_http_phases_NGX_HTTP_ACCESS_PHASE, ngx_int_t, ngx_module_t, NGX_HTTP_MODULE,
 };
 use ngx::http::{
     HttpModule, HttpModuleLocationConf, HttpModuleMainConf, Merge, MergeConfigError,
@@ -173,12 +172,8 @@ pub unsafe extern "C" fn x402_phase_handler(
             };
 
             match crate::ngx_module::handler::x402_handler_impl(req, &parsed) {
-                Ok(HandlerResult::PaymentValid) => {
-                    ngx::ffi::NGX_DECLINED as ngx::ffi::ngx_int_t
-                }
-                Ok(HandlerResult::ResponseSent) => {
-                    ngx::ffi::NGX_OK as ngx::ffi::ngx_int_t
-                }
+                Ok(HandlerResult::PaymentValid) => ngx::ffi::NGX_DECLINED as ngx::ffi::ngx_int_t,
+                Ok(HandlerResult::ResponseSent) => ngx::ffi::NGX_OK as ngx::ffi::ngx_int_t,
                 Ok(HandlerResult::Error) | Err(_) => {
                     ngx::ffi::NGX_HTTP_INTERNAL_SERVER_ERROR as ngx::ffi::ngx_int_t
                 }

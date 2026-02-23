@@ -22,11 +22,9 @@ impl X402Metrics {
 
             let requests_total =
                 IntCounter::new("x402_requests_total", "Total requests processed").unwrap();
-            let verification_attempts = IntCounter::new(
-                "x402_payment_verifications_total",
-                "Verification attempts",
-            )
-            .unwrap();
+            let verification_attempts =
+                IntCounter::new("x402_payment_verifications_total", "Verification attempts")
+                    .unwrap();
             let verification_success = IntCounter::new(
                 "x402_payment_verifications_success_total",
                 "Successful verifications",
@@ -42,11 +40,8 @@ impl X402Metrics {
             let facilitator_errors =
                 IntCounter::new("x402_facilitator_errors_total", "Facilitator errors").unwrap();
             let verification_duration = Histogram::with_opts(
-                HistogramOpts::new(
-                    "x402_verification_duration_seconds",
-                    "Verification latency",
-                )
-                .buckets(vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
+                HistogramOpts::new("x402_verification_duration_seconds", "Verification latency")
+                    .buckets(vec![0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0]),
             )
             .unwrap();
             let payment_amount = Histogram::with_opts(
@@ -66,9 +61,7 @@ impl X402Metrics {
                 .register(Box::new(verification_failed.clone()))
                 .ok();
             registry.register(Box::new(responses_402.clone())).ok();
-            registry
-                .register(Box::new(facilitator_errors.clone()))
-                .ok();
+            registry.register(Box::new(facilitator_errors.clone())).ok();
             registry
                 .register(Box::new(verification_duration.clone()))
                 .ok();
