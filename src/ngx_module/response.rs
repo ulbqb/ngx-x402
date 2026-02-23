@@ -42,7 +42,7 @@ p{color:#666;line-height:1.5}
 pub(crate) fn generate_paywall_html(message: &str, requirements: &[PaymentRequirements]) -> String {
     let req = requirements.first();
     let network = req.map(|r| r.network.as_str()).unwrap_or("unknown");
-    let amount = req.map(|r| r.max_amount_required.as_str()).unwrap_or("0");
+    let amount = req.map(|r| r.amount.as_str()).unwrap_or("0");
     let pay_to = req.map(|r| r.pay_to.as_str()).unwrap_or("unknown");
     HTML_PAYWALL_TEMPLATE
         .replace("{{MESSAGE}}", message)
@@ -71,8 +71,6 @@ pub fn send_402_response(
         base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &requirements_json);
     r.add_header_out("PAYMENT-REQUIRED", &requirements_b64)
         .ok_or_else(|| ConfigError::new("Failed to set PAYMENT-REQUIRED header"))?;
-    r.add_header_out("X-Payment-Required", &requirements_b64)
-        .ok_or_else(|| ConfigError::new("Failed to set X-Payment-Required header"))?;
     if is_browser {
         let html = generate_paywall_html(error_message, requirements);
         r.add_header_out("Content-Type", "text/html; charset=utf-8")
@@ -142,7 +140,6 @@ mod tests {
             scheme: "exact".to_string(),
             network: "eip155:8453".to_string(),
             amount: "1000".to_string(),
-            max_amount_required: "1000".to_string(),
             resource: "/api/weather".to_string(),
             description: "".to_string(),
             mime_type: Some("application/json".to_string()),

@@ -12,10 +12,8 @@ use serde::{Deserialize, Serialize};
 pub struct PaymentRequirements {
     pub scheme: String,
     pub network: String,
-    /// x402 v2: "amount" (required by client)
+    /// Amount in smallest unit (e.g. satoshis for USDC 6 decimals)
     pub amount: String,
-    /// x402 v1: "maxAmountRequired"
-    pub max_amount_required: String,
     pub resource: String,
     pub description: String,
     pub mime_type: Option<String>,
@@ -122,7 +120,7 @@ pub fn create_requirements(
         .ok_or_else(|| ConfigError::new("pay_to address not configured"))?;
     let network = resolve_network(config)?;
     let decimals = config.asset_decimals.unwrap_or(6);
-    let max_amount_required = amount_to_smallest_unit(amount, decimals);
+    let amount_str = amount_to_smallest_unit(amount, decimals);
     let asset_address = if let Some(ref custom) = config.asset {
         custom.clone()
     } else {
@@ -137,8 +135,7 @@ pub fn create_requirements(
     Ok(PaymentRequirements {
         scheme: "exact".to_string(),
         network,
-        amount: max_amount_required.clone(),
-        max_amount_required,
+        amount: amount_str,
         resource,
         description: config.description.as_deref().unwrap_or("").to_string(),
         mime_type: Some(mime.to_string()),
@@ -207,7 +204,6 @@ mod tests {
         assert_eq!(req.scheme, "exact");
         assert_eq!(req.network, "eip155:8453");
         assert_eq!(req.amount, "1000");
-        assert_eq!(req.max_amount_required, "1000");
         assert_eq!(req.resource, "/api/weather");
         assert_eq!(req.mime_type.as_deref(), Some("application/json"));
         assert_eq!(req.max_timeout_seconds, 60);
@@ -333,5 +329,73 @@ mod tests {
             None,
         );
         assert!(create_requirements(&config, "/api", None).is_err());
+    }
+
+    #[test]
+    fn test_payment_requirements_json_v2_format() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api/weather", None).unwrap();
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(json.get("amount").is_some(), "amount must be present (v2)");
+        assert!(
+            json.get("maxAmountRequired").is_none(),
+            "maxAmountRequired must not be present (v1 removed)"
+        );
+    }
+
+    #[test]
+    fn test_payment_requirements_response_x402_version_2() {
+        let req = create_requirements(
+            &test_config(
+                Some(Decimal::from_str("0.001").unwrap()),
+                Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            ),
+            "/api",
+            None,
+        )
+        .unwrap();
+        let resp = PaymentRequirementsResponse::new("Payment required", vec![req]);
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(
+            json.get("x402Version").and_then(|v| v.as_u64()),
+            Some(2),
+            "x402Version must be 2"
+        );
+    }
+
+    #[test]
+    fn test_402_response_json_v2_structure() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api", None).unwrap();
+        let resp = PaymentRequirementsResponse::new("Pay", vec![req]);
+        let json = serde_json::to_value(&resp).unwrap();
+        assert_eq!(json["x402Version"], 2);
+        let accept = &json["accepts"][0];
+        assert!(accept.get("amount").is_some());
+        assert!(accept["network"].as_str().unwrap().starts_with("eip155:"));
     }
 }
