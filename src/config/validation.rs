@@ -100,6 +100,12 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_amount_scale_too_high() {
+        let d = Decimal::from_str("0.0000000000000000001").unwrap();
+        assert!(validate_amount(d).is_err());
+    }
+
+    #[test]
     fn test_validate_ethereum_address() {
         assert!(validate_ethereum_address("0x1234567890abcdef1234567890abcdef12345678").is_ok());
         assert!(validate_ethereum_address("1234567890abcdef1234567890abcdef12345678").is_err());

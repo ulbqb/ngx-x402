@@ -152,9 +152,186 @@ pub fn create_requirements(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ngx_module::config::FacilitatorFallback;
+    use std::str::FromStr;
+    use std::time::Duration;
+
+    fn test_config(
+        amount: Option<Decimal>,
+        pay_to: Option<String>,
+        network: Option<String>,
+        network_id: Option<u64>,
+        asset: Option<String>,
+        asset_decimals: Option<u8>,
+        ttl: Option<u32>,
+        description: Option<String>,
+    ) -> ParsedX402Config {
+        ParsedX402Config {
+            enabled: true,
+            amount,
+            pay_to,
+            facilitator_url: Some("https://example.com/facilitator".to_string()),
+            description,
+            network,
+            network_id,
+            resource: None,
+            asset,
+            asset_decimals,
+            timeout: Some(Duration::from_secs(10)),
+            facilitator_fallback: FacilitatorFallback::Error,
+            ttl,
+            redis_url: None,
+            replay_ttl: None,
+        }
+    }
+
     #[test]
     fn test_amount_to_smallest_unit() {
         assert_eq!(amount_to_smallest_unit(Decimal::new(1, 3), 6), "1000");
         assert_eq!(amount_to_smallest_unit(Decimal::new(1, 0), 6), "1000000");
+    }
+
+    #[test]
+    fn test_create_requirements_success() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api/weather", Some("application/json")).unwrap();
+        assert_eq!(req.scheme, "exact");
+        assert_eq!(req.network, "eip155:8453");
+        assert_eq!(req.amount, "1000");
+        assert_eq!(req.max_amount_required, "1000");
+        assert_eq!(req.resource, "/api/weather");
+        assert_eq!(req.mime_type.as_deref(), Some("application/json"));
+        assert_eq!(req.max_timeout_seconds, 60);
+        assert_eq!(
+            req.asset.as_deref(),
+            Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+        );
+    }
+
+    #[test]
+    fn test_create_requirements_network_from_network_id() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            Some(8453),
+            None,
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api", None).unwrap();
+        assert_eq!(req.network, "eip155:8453");
+    }
+
+    #[test]
+    fn test_create_requirements_network_from_name() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            Some("base".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api", None).unwrap();
+        assert_eq!(req.network, "eip155:8453");
+    }
+
+    #[test]
+    fn test_create_requirements_default_usdc() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api", None).unwrap();
+        assert_eq!(
+            req.asset.as_deref(),
+            Some("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913")
+        );
+        assert!(req.extra.is_some());
+    }
+
+    #[test]
+    fn test_create_requirements_custom_asset() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            Some("base-sepolia".to_string()),
+            None,
+            Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e".to_string()),
+            None,
+            None,
+            None,
+        );
+        let req = create_requirements(&config, "/api", None).unwrap();
+        assert_eq!(
+            req.asset.as_deref(),
+            Some("0x036CbD53842c5426634e7929541eC2318f3dCF7e")
+        );
+        let extra = req.extra.as_ref().unwrap();
+        assert_eq!(extra.get("name").and_then(|v| v.as_str()), Some("USDC"));
+    }
+
+    #[test]
+    fn test_create_requirements_missing_amount() {
+        let config = test_config(
+            None,
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(create_requirements(&config, "/api", None).is_err());
+    }
+
+    #[test]
+    fn test_create_requirements_missing_pay_to() {
+        let config = test_config(
+            Some(Decimal::from_str("0.001").unwrap()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(create_requirements(&config, "/api", None).is_err());
+    }
+
+    #[test]
+    fn test_create_requirements_negative_amount() {
+        let config = test_config(
+            Some(Decimal::from_str("-0.001").unwrap()),
+            Some("0x1234567890abcdef1234567890abcdef12345678".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+        );
+        assert!(create_requirements(&config, "/api", None).is_err());
     }
 }
