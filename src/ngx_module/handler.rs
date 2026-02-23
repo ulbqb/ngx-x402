@@ -93,9 +93,8 @@ pub fn x402_handler_impl(r: &mut Request, config: &ParsedX402Config) -> Result<H
         metrics.record_payment_amount(amount_f64);
     }
 
-    // Check for X-PAYMENT / PAYMENT-SIGNATURE header
-    let payment_header = get_header_value(r, "X-PAYMENT")
-        .or_else(|| get_header_value(r, "Payment-Signature"));
+    // Check for PAYMENT-SIGNATURE header (x402 v2)
+    let payment_header = get_header_value(r, "Payment-Signature");
 
     if let Some(payment_b64) = payment_header {
         log_debug(Some(r), "Payment header found, verifying...");

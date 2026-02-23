@@ -1,1 +1,20 @@
-{"name":"x402-payment-client","version":"1.0.0","description":"x402 payment client for ngx-x402 protected API","type":"module","main":"pay-weather.js","scripts":{"start":"node pay-weather.js","test":"echo \"Error: no test specified\" && exit 1"},"keywords":[],"author":"","license":"ISC","dependencies":{"@x402/evm":"^2.3.1","@x402/fetch":"^2.3.0","dotenv":"^17.3.1","viem":"^2.46.2"}}
+{
+    "name": "x402-payment-client",
+    "version": "1.0.0",
+    "description": "x402 payment client for ngx-x402 protected API",
+    "type": "module",
+    "main": "pay-weather.js",
+    "scripts": {
+        "start": "node pay-weather.js",
+        "test": "echo \"Error: no test specified\" && exit 1"
+    },
+    "keywords": [],
+    "author": "",
+    "license": "ISC",
+    "dependencies": {
+        "@x402/evm": "^2.3.1",
+        "@x402/fetch": "^2.3.0",
+        "dotenv": "^17.3.1",
+        "viem": "^2.46.2"
+    }
+}

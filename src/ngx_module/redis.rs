@@ -60,7 +60,7 @@ pub fn store_payment_as_used(payment_b64: &str, ttl_seconds: u64) -> Result<()> 
     Ok(())
 }
 
-fn payment_hash(payment_b64: &str) -> String {
+pub(crate) fn payment_hash(payment_b64: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(payment_b64.as_bytes());
     hex::encode(hasher.finalize())
@@ -68,4 +68,25 @@ fn payment_hash(payment_b64: &str) -> String {
 
 pub fn is_redis_configured() -> bool {
     REDIS_CLIENT.get().is_some()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_payment_hash_deterministic() {
+        let hash = payment_hash("abc");
+        assert_eq!(
+            hash,
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[test]
+    fn test_payment_hash_format() {
+        let hash = payment_hash("test");
+        assert_eq!(hash.len(), 64);
+        assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+    }
 }

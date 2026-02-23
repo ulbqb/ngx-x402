@@ -96,12 +96,23 @@ mod tests {
     fn test_validate_amount() {
         assert!(validate_amount(Decimal::from_str("0.001").unwrap()).is_ok());
         assert!(validate_amount(Decimal::ZERO).is_ok());
+        assert!(validate_amount(Decimal::from_str("100").unwrap()).is_ok());
+        assert!(validate_amount(Decimal::from_str("-0.001").unwrap()).is_err());
         assert!(validate_amount(Decimal::from_str("-1").unwrap()).is_err());
+    }
+
+    #[test]
+    fn test_validate_amount_scale_too_high() {
+        let d = Decimal::from_str("0.0000000000000000001").unwrap();
+        assert!(validate_amount(d).is_err());
     }
 
     #[test]
     fn test_validate_ethereum_address() {
         assert!(validate_ethereum_address("0x1234567890abcdef1234567890abcdef12345678").is_ok());
+        assert!(validate_ethereum_address("0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913").is_ok());
+        assert!(validate_ethereum_address("0x0000000000000000000000000000000000000000").is_ok());
+        assert!(validate_ethereum_address("not_an_address").is_err());
         assert!(validate_ethereum_address("1234567890abcdef1234567890abcdef12345678").is_err());
         assert!(validate_ethereum_address("0x1234").is_err());
         assert!(validate_ethereum_address("0xGGGG567890abcdef1234567890abcdef12345678").is_err());
@@ -110,7 +121,10 @@ mod tests {
     #[test]
     fn test_validate_network() {
         assert!(validate_network("base-sepolia").is_ok());
+        assert!(validate_network("base").is_ok());
         assert!(validate_network("eip155:8453").is_ok());
+        assert!(validate_network("eip155:84532").is_ok());
+        assert!(validate_network("solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp").is_ok());
         assert!(validate_network("").is_err());
         assert!(validate_network(":").is_err());
     }
@@ -118,8 +132,10 @@ mod tests {
     #[test]
     fn test_validate_url() {
         assert!(validate_url("https://example.com/facilitator").is_ok());
+        assert!(validate_url("https://x402.org/facilitator").is_ok());
         assert!(validate_url("http://localhost:8080").is_ok());
-        assert!(validate_url("ftp://example.com").is_err());
+        assert!(validate_url("http://localhost:8080/verify").is_ok());
+        assert!(validate_url("ftp://invalid").is_err());
         assert!(validate_url("").is_err());
     }
 
@@ -127,14 +143,17 @@ mod tests {
     fn test_validate_resource_path() {
         assert!(validate_resource_path("/api/weather").is_ok());
         assert!(validate_resource_path("https://example.com/api").is_ok());
+        assert!(validate_resource_path("https://example.com/api/weather").is_ok());
         assert!(validate_resource_path("").is_err());
         assert!(validate_resource_path("/api/../secret").is_err());
+        assert!(validate_resource_path("/api/../etc/passwd").is_err());
     }
 
     #[test]
     fn test_chain_id_to_network() {
         assert_eq!(chain_id_to_network(8453).unwrap(), "base");
         assert_eq!(chain_id_to_network(84532).unwrap(), "base-sepolia");
+        assert_eq!(chain_id_to_network(137).unwrap(), "polygon");
         assert!(chain_id_to_network(999999).is_err());
     }
 
@@ -148,6 +167,8 @@ mod tests {
             parse_amount("$0.001").unwrap(),
             Decimal::from_str("0.001").unwrap()
         );
+        assert_eq!(parse_amount("$1").unwrap(), Decimal::from_str("1").unwrap());
         assert!(parse_amount("abc").is_err());
+        assert!(parse_amount("").is_err());
     }
 }
